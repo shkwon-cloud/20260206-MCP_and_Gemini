@@ -87,6 +87,7 @@ def get_base_datetime():
 @mcp.tool()
 def get_korea_weather(location: str) -> str:
     """
+    =========== SHKWON=========
     한국 도시의 현재 날씨 정보를 가져옵니다.
     지원 도시: 서울, 부산, 대구, 인천, 광주, 대전, 울산, 제주
     영문 입력도 가능: Seoul, Busan, Daegu, Incheon, Gwangju, Daejeon, Ulsan, Jeju
@@ -190,6 +191,7 @@ def get_korea_weather(location: str) -> str:
 @mcp.tool()
 def get_weather_forecast(location: str, hours: int = 24) -> str:
     """
+    =========== SHKWON ==========
     한국 도시의 날씨 예보를 가져옵니다.
     location: 도시명 (서울, 부산, 대구, 인천, 광주, 대전, 울산, 제주)
     hours: 예보 시간 (기본 24시간)
@@ -218,6 +220,7 @@ def get_weather_forecast(location: str, hours: int = 24) -> str:
 @mcp.tool()
 def get_supported_cities() -> str:
     """
+    ========== SHKWON ==========
     지원하는 한국 도시 목록을 반환합니다.
     """
     logger.info("SHKWON 🔧 [get_supported_cities] 호출됨")
