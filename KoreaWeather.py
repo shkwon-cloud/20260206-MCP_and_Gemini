@@ -91,7 +91,7 @@ def get_korea_weather(location: str) -> str:
     지원 도시: 서울, 부산, 대구, 인천, 광주, 대전, 울산, 제주
     영문 입력도 가능: Seoul, Busan, Daegu, Incheon, Gwangju, Daejeon, Ulsan, Jeju
     """
-    logger.info(f"🔧 [get_korea_weather] 호출됨 | 입력: location='{location}'")
+    logger.info(f"SHKWON - 🔧 [get_korea_weather] 호출됨 | 입력: location='{location}'")
     
     # 격자 좌표 확인
     grid = LOCATION_GRID.get(location)
@@ -194,7 +194,7 @@ def get_weather_forecast(location: str, hours: int = 24) -> str:
     location: 도시명 (서울, 부산, 대구, 인천, 광주, 대전, 울산, 제주)
     hours: 예보 시간 (기본 24시간)
     """
-    logger.info(f"🔧 [get_weather_forecast] 호출됨 | location='{location}', hours={hours}")
+    logger.info(f"SHKWON - 🔧 [get_weather_forecast] 호출됨 | location='{location}', hours={hours}")
     
     grid = LOCATION_GRID.get(location)
     if not grid:
@@ -220,7 +220,7 @@ def get_supported_cities() -> str:
     """
     지원하는 한국 도시 목록을 반환합니다.
     """
-    logger.info("🔧 [get_supported_cities] 호출됨")
+    logger.info("SHKWON 🔧 [get_supported_cities] 호출됨")
     cities = list(set([k for k in LOCATION_GRID.keys() if not k[0].isupper()]))  # 한글만
     result = f"지원 도시: {', '.join(cities)}"
     logger.info(f"   ✅ {result}")
