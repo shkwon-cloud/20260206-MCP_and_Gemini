@@ -2,8 +2,9 @@
 import asyncio
 import os
 import logging
+import json
 from dotenv import load_dotenv
-from google import genai
+from openai import AsyncOpenAI
 from fastmcp import Client
 
 # 로깅 설정
@@ -16,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 # 1. 환경 변수 로드
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # 2. 로컬에 떠 있는 MCP 서버(Fashion Server)에 연결
 MCP_SERVER_URL = "http://localhost:8002/sse"
 mcp_client = Client(MCP_SERVER_URL)
 
-# 3. Gemini 클라이언트 생성
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+# 3. OpenAI 클라이언트 생성
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # 시스템 프롬프트
 SYSTEM_INSTRUCTION = """
@@ -33,7 +34,7 @@ SYSTEM_INSTRUCTION = """
 
 async def main():
     logger.info("=" * 60)
-    logger.info("🤖 Gemini Agent 시작")
+    logger.info("🤖 OpenAI Agent 시작")
     logger.info(f"🔗 MCP 서버 URL: {MCP_SERVER_URL}")
     logger.info("=" * 60)
 
@@ -45,8 +46,21 @@ async def main():
         # 사용 가능한 도구 목록 확인
         tools_list = await mcp_client.list_tools()
         logger.info(f"📦 사용 가능한 도구 ({len(tools_list)}개):")
+        
+        # OpenAI 형식으로 도구 변환
+        openai_tools = []
         for tool in tools_list:
             logger.info(f"   - {tool.name}: {tool.description[:50]}...")
+            # MCP 도구의 inputSchema를 OpenAI의 parameters로 맵핑
+            # inputSchema가 직접 도구 객체에 없을 경우를 대비해 딕셔너리 변환 시도
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": getattr(tool, 'inputSchema', {}),
+                }
+            })
 
         # 질문 정의
         user_query = "ideabong에게 오늘 날씨에 맞춰서 옷을 추천해줘. 지난주 화요일에 입은 거랑 안 겹치게 해줘."
@@ -55,43 +69,85 @@ async def main():
         logger.info(f"🙋 사용자 질문: {user_query}")
         logger.info("-" * 60)
 
-        # FastMCP Client의 세션 객체 가져오기
-        session = mcp_client.session
-        logger.info(f"🔧 MCP 세션 타입: {type(session).__name__}")
+        # 메시지 히스토리 초기화
+        messages = [
+            {"role": "system", "content": SYSTEM_INSTRUCTION},
+            {"role": "user", "content": user_query}
+        ]
 
-        # Gemini API 호출
-        logger.info("🧠 Gemini API 호출 중... (도구 자동 호출 활성화)")
+        logger.info("🧠 OpenAI API 호출 중... (도구 활용)")
 
-        response = await gemini_client.aio.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=user_query,
-            config=genai.types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                temperature=0,
-                tools=[session],
-            ),
+        # 1. 초기 호출
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            tools=openai_tools,
+            temperature=0,
         )
+
+        # 2. 도구 호출 루프
+        while response.choices[0].message.tool_calls:
+            assistant_message = response.choices[0].message
+            messages.append(assistant_message)
+            
+            tool_calls = assistant_message.tool_calls
+            for tool_call in tool_calls:
+                tool_name = tool_call.function.name
+                tool_args = json.loads(tool_call.function.arguments)
+                
+                logger.info(f"🛠️ MCP 도구 호출: {tool_name}({tool_args})")
+                
+                try:
+                    # mcp_client.call_tool을 사용하여 실제 도구 실행
+                    call_result = await mcp_client.call_tool(tool_name, tool_args)
+                    
+                    # 결과에서 텍스트 추출
+                    tool_output = ""
+                    if hasattr(call_result, 'content'):
+                        # typical MCP content is a list of TextContent/ImageContent
+                        tool_output = "\n".join([
+                            c.text for c in call_result.content 
+                            if hasattr(c, 'text')
+                        ])
+                    else:
+                        tool_output = str(call_result)
+                        
+                except Exception as e:
+                    tool_output = f"오류 발생: {str(e)}"
+                    logger.error(f"   ❌ 도구 호출 실패: {tool_output}")
+
+                logger.info(f"   ✅ 결과: {tool_output[:100]}...")
+                
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_name,
+                    "content": tool_output,
+                })
+
+            # 도구 결과를 포함하여 다시 호출
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                tools=openai_tools,
+                temperature=0,
+            )
+
+        # 최종 응답 추출
+        final_response = response.choices[0].message.content
 
         # 응답 메타데이터 출력
         logger.info("-" * 60)
         logger.info("📊 응답 메타데이터:")
-        if response.candidates:
-            candidate = response.candidates[0]
-            logger.info(f"   - finish_reason: {candidate.finish_reason}")
-            if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
-                for rating in candidate.safety_ratings[:2]:  # 처음 2개만
-                    logger.info(f"   - safety: {rating.category} = {rating.probability}")
-
-        # 사용량 정보 (있을 경우)
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            usage = response.usage_metadata
-            logger.info(f"   - 입력 토큰: {getattr(usage, 'prompt_token_count', 'N/A')}")
-            logger.info(f"   - 출력 토큰: {getattr(usage, 'candidates_token_count', 'N/A')}")
+        logger.info(f"   - model: {response.model}")
+        if hasattr(response, 'usage'):
+            logger.info(f"   - 입력 토큰: {response.usage.prompt_tokens}")
+            logger.info(f"   - 출력 토큰: {response.usage.completion_tokens}")
 
         logger.info("-" * 60)
-        logger.info("🤖 Gemini 응답:")
+        logger.info("🤖 OpenAI 응답:")
         logger.info("-" * 60)
-        print(f"\n{response.text}\n")
+        print(f"\n{final_response}\n")
         logger.info("=" * 60)
         logger.info("✅ Agent 작업 완료!")
         logger.info("=" * 60)
